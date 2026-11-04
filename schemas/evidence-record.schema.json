@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvidenceRecord",
+  "type": "object",
+  "required": ["evidence_id", "source_id", "claim", "evidence_type", "limitations"],
+  "properties": {
+    "evidence_id": {"type": "string"},
+    "source_id": {"type": "string"},
+    "claim": {"type": "string"},
+    "evidence_type": {"type": "string"},
+    "population": {"type": "string"},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "applicability": {"type": "string"}
+  }
+}

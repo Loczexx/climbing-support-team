@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PlanChangeProposal",
+  "type": "object",
+  "required": ["proposal_id", "domain", "current_state", "proposed_change", "reason", "evidence", "requires_user_confirmation"],
+  "properties": {
+    "proposal_id": {"type": "string"},
+    "domain": {"enum": ["training", "nutrition", "recovery"]},
+    "current_state": {"type": "object"},
+    "proposed_change": {"type": "object"},
+    "reason": {"type": "string"},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "risk": {"type": "string"},
+    "requires_user_confirmation": {"const": true}
+  }
+}

@@ -1,0 +1,79 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets (CRITICAL FOR PUBLIC GITHUB)
+.env
+.env.local
+.env.*.local
+*.key
+credentials.json
+token.json
+client_secret*.json
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local databases and runtime user data
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/cache/
+outputs/*
+!outputs/.gitkeep
+work/*
+!work/.gitkeep
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Logs & temp
+*.log
+logs/
+temp/
+tmp/
