@@ -456,6 +456,29 @@ Powinien zweryfikować ją względem własnej bazy wiedzy.
 `context_summary` ma być krótkim streszczeniem kontekstu i nie powinien
 zawierać więcej danych użytkownika, niż jest to potrzebne.
 
+Przykład (koperta AgentMessage):
+
+```json
+{
+  "message_id": "msg_rec_201",
+  "sender": "climbing_coach",
+  "receiver": "nutritionist",
+  "user_id": "usr_12345",
+  "type": "RECOMMENDATION",
+  "task_id": "task_20261104_02",
+  "timestamp": "2026-11-04T14:32:00Z",
+  "content": {
+    "topic": "energy_expenditure_increase",
+    "context_summary": "Zwiększono częstotliwość jednostek o wysokiej intensywności z 3 do 4 w tygodniu.",
+    "recommendation": "Dostosowanie podaży energii i węglowodanów w dniach okołotreningowych.",
+    "reason": "Większa objętość i intensywność wymaga wyższej dostępności glikogenu dla ochrony przed przetrenowaniem.",
+    "evidence": ["Burke 2011", "Thomas 2016"],
+    "priority": "medium",
+    "requires_user_confirmation": true
+  }
+}
+```
+
 
 # 12. Monitoring żywienia
 
@@ -497,6 +520,8 @@ uwzględniając znane źródła krótkoterminowych wahań masy.
 
 Podobnie należy ostrożnie interpretować krótkoterminowe zmiany procentu
 tkanki tłuszczowej, szczególnie gdy metoda pomiaru ma dużą zmienność.
+
+Podsumowania dzienne, tygodniowe i miesięczne powinny być zapisywane w bazie danych jako osobne rekordy agregatów (wyliczane algorytmicznie przez Memory Manager), aby uniknąć kosztownego przeliczania całej historii przy każdym zapytaniu.
 
 ### Missing data
 

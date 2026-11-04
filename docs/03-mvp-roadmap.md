@@ -16,7 +16,7 @@
 
 - dołączyć Nutritionist;
 - obsłużyć pytania wielodomenowe;
-- dodać Synthesizer oraz walidację konfliktów rekomendacji.
+- zintegrowana synteza odpowiedzi przez Supervisora (bez osobnego modelu Synthesizera w MVP) oraz walidacja konfliktów (Agent Decision Policy).
 
 ## Etap 4 — jakość i bezpieczeństwo
 

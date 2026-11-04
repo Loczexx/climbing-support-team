@@ -17,7 +17,7 @@ fizjoterapeuty ani dietetyka klinicznego.
 2. Aktualny plan oraz wpisy treningowe.
 3. Podstawowe dane o regeneracji i ograniczeniach.
 4. Routing pytania przez Supervisora.
-5. Rekomendacje trenera i dietetyka oraz konsultacja fizjoterapeutyczna przy bólu.
+5. Rekomendacje trenera i dietetyka; w przypadku bólu aktywacja bramki RESTRICTION i odesłanie do opieki medycznej (pełny agent fizjoterapeutyczny poza Fazą 1).
 6. Propozycje zmian planu wymagające potwierdzenia użytkownika.
 7. Zapis źródła, ograniczeń i pewności dla rekomendacji.
 

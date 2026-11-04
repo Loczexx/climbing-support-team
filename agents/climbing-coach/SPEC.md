@@ -455,26 +455,26 @@ Rekomendacja przekazywana innemu agentowi powinna zawierać:
 - informację czy wymaga akceptacji użytkownika,
 - informację czy rekomendacja powinna zmienić istniejący plan.
 
-Przykład:
+Przykład (koperta AgentMessage):
 
 ```json
 {
+  "message_id": "msg_rec_201",
   "sender": "climbing_coach",
   "receiver": "nutritionist",
-  "recommendation_id": "rec_001",
   "user_id": "usr_12345",
-  "timestamp": "2026-09-22T10:00:00Z",
-  "type": "recommendation",
-  "topic": "nutrition",
-  "recommendation": "...",
-  "context_summary": "Zwiększono obciążenie treningowe w bieżącym mikrocyklu.",
-  "reason": "...",
-  "evidence": ["..."],
-  "confidence": "medium",
-  "priority": "medium",
-  "required_data": ["current_energy_intake"],
-  "requires_user_confirmation": true,
-  "requires_plan_revision": true
+  "type": "RECOMMENDATION",
+  "task_id": "task_20261104_02",
+  "timestamp": "2026-11-04T14:32:00Z",
+  "content": {
+    "topic": "energy_expenditure_increase",
+    "context_summary": "Zwiększono częstotliwość jednostek o wysokiej intensywności z 3 do 4 w tygodniu.",
+    "recommendation": "Dostosowanie podaży energii i węglowodanów w dniach okołotreningowych.",
+    "reason": "Większa objętość i intensywność wymaga wyższej dostępności glikogenu dla ochrony przed przetrenowaniem.",
+    "evidence": ["Burke 2011", "Thomas 2016"],
+    "priority": "medium",
+    "requires_user_confirmation": true
+  }
 }
 ```
 
