@@ -1,10 +1,10 @@
 """
 Deterministic Memory Manager service based on SQLite.
 
-Implements Least Privilege context retrieval as defined in Agent Decision Policy v0.1:
-- get_coach_context: Climbing history, movement restrictions; NO nutrition/meal logs.
-- get_nutritionist_context: Nutrition logs, dietary restrictions, weight trend, training load summary; NO raw climb logs.
-- get_supervisor_context: High-level summaries, active goals, active restrictions; NO raw set-by-set or meal-by-meal data.
+Implements Least Privilege context retrieval as defined in Agent Decision Policy v0.2:
+- get_coach_context: Climbing history, movement restrictions, weight trend; NO nutrition/meal logs.
+- get_nutritionist_context: Nutrition logs, dietary restrictions, weight/BF% trend, enriched training load summary (type, duration, RPE); Task-scoped access for injury restrictions.
+- get_supervisor_context: High-level summaries, active goals, all active restrictions; NO raw set-by-set or meal-by-meal data.
 """
 
 from contextlib import contextmanager
@@ -68,9 +68,14 @@ class MemoryManager:
                 CREATE TABLE IF NOT EXISTS restrictions (
                     restriction_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
-                    category TEXT NOT NULL, -- 'movement', 'dietary', 'medical'
+                    category TEXT NOT NULL, -- 'movement', 'training', 'dietary', 'medical'
                     description TEXT NOT NULL,
                     severity TEXT NOT NULL, -- 'WARNING', 'RESTRICTION', 'CRITICAL_ESCALATION'
+                    affected_area TEXT,
+                    restricted_actions TEXT, -- JSON array of strings
+                    status TEXT DEFAULT 'active', -- 'active', 'resolved', 'archived'
+                    source TEXT DEFAULT 'user_reported', -- 'confirmed', 'user_reported', 'agent_detected'
+                    verification_status TEXT DEFAULT 'unverified_medical',
                     is_active INTEGER DEFAULT 1,
                     created_at TEXT,
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -100,6 +105,17 @@ class MemoryManager:
                     fat_g REAL,
                     is_complete INTEGER DEFAULT 1,
                     is_estimated INTEGER DEFAULT 0,
+                    created_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS weight_logs (
+                    log_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    log_date TEXT NOT NULL,
+                    weight_kg REAL NOT NULL,
+                    body_fat_pct REAL,
+                    measurement_method TEXT,
                     created_at TEXT,
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 );
@@ -153,6 +169,14 @@ class MemoryManager:
                 """,
                 (user_id, name, age, gender, height_cm, weight_kg, experience_level, now),
             )
+            # Add initial weight record
+            conn.execute(
+                """
+                INSERT INTO weight_logs (log_id, user_id, log_date, weight_kg, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (f"w_{user_id}_{now}", user_id, now[:10], weight_kg, now),
+            )
 
     def add_goal(self, goal_id: str, user_id: str, title: str, target_grade: str, deadline: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -172,15 +196,55 @@ class MemoryManager:
         category: str,
         description: str,
         severity: str = "RESTRICTION",
+        affected_area: Optional[str] = None,
+        restricted_actions: Optional[List[str]] = None,
+        status: str = "active",
+        source: str = "user_reported",
+        verification_status: str = "unverified_medical",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        actions_json = json.dumps(restricted_actions or [])
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO restrictions (
+                    restriction_id, user_id, category, description, severity,
+                    affected_area, restricted_actions, status, source, verification_status, is_active, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                """,
+                (
+                    restriction_id,
+                    user_id,
+                    category,
+                    description,
+                    severity,
+                    affected_area,
+                    actions_json,
+                    status,
+                    source,
+                    verification_status,
+                    now,
+                ),
+            )
+
+    def add_weight_log(
+        self,
+        log_id: str,
+        user_id: str,
+        log_date: str,
+        weight_kg: float,
+        body_fat_pct: Optional[float] = None,
+        measurement_method: Optional[str] = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO restrictions (restriction_id, user_id, category, description, severity, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, 1, ?)
+                INSERT INTO weight_logs (log_id, user_id, log_date, weight_kg, body_fat_pct, measurement_method, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (restriction_id, user_id, category, description, severity, now),
+                (log_id, user_id, log_date, weight_kg, body_fat_pct, measurement_method, now),
             )
 
     def add_training_log(
@@ -250,15 +314,14 @@ class MemoryManager:
         - Active goals.
         - Movement restrictions ONLY (no dietary/general medical).
         - Detailed training logs.
+        - Weight trend (for power-to-weight analysis as permitted in Policy v0.2).
         - ABSOLUTELY NO NUTRITION/MEAL LOGS.
         """
         with self._get_connection() as conn:
-            # User profile
             user = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
             if not user:
                 raise ValueError(f"User {user_id} not found")
 
-            # Goals
             goals = [
                 dict(row)
                 for row in conn.execute(
@@ -267,16 +330,22 @@ class MemoryManager:
                 ).fetchall()
             ]
 
-            # Movement restrictions only
             restrictions = [
-                dict(row)
+                {
+                    "restriction_id": row["restriction_id"],
+                    "description": row["description"],
+                    "severity": row["severity"],
+                    "affected_area": row["affected_area"],
+                    "restricted_actions": json.loads(row["restricted_actions"]) if row["restricted_actions"] else [],
+                    "status": row["status"],
+                    "verification_status": row["verification_status"],
+                }
                 for row in conn.execute(
-                    "SELECT restriction_id, description, severity FROM restrictions WHERE user_id = ? AND is_active = 1 AND category = 'movement'",
+                    "SELECT * FROM restrictions WHERE user_id = ? AND is_active = 1 AND category IN ('movement', 'training')",
                     (user_id,),
                 ).fetchall()
             ]
 
-            # Training logs
             t_logs = [
                 {
                     "log_id": row["log_id"],
@@ -292,6 +361,14 @@ class MemoryManager:
                 ).fetchall()
             ]
 
+            weight_trend = [
+                {"date": row["log_date"], "weight_kg": row["weight_kg"]}
+                for row in conn.execute(
+                    "SELECT log_date, weight_kg FROM weight_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 14",
+                    (user_id,),
+                ).fetchall()
+            ]
+
             return {
                 "profile": {
                     "age": user["age"],
@@ -303,16 +380,24 @@ class MemoryManager:
                 "goals": goals,
                 "movement_restrictions": restrictions,
                 "training_logs": t_logs,
+                "weight_trend": weight_trend,
             }
 
-    def get_nutritionist_context(self, user_id: str, limit_days: int = 14) -> Dict[str, Any]:
+    def get_nutritionist_context(
+        self,
+        user_id: str,
+        limit_days: int = 14,
+        granted_scopes: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         Retrieves context strictly allowed for General Nutritionist:
         - Basic profile.
         - Active goals.
         - Dietary restrictions ONLY.
         - Detailed nutrition logs.
-        - High-level training volume estimate (count of sessions, avg RPE) WITHOUT raw route/climbing logs.
+        - Enriched training load summary: count, total duration, avg RPE, and recent session overviews (session type, duration, RPE) WITHOUT raw climbing/bouldering move-by-move logs.
+        - Weight and BF% trend with measurement method.
+        - Task-scoped access: if granted_scopes contains 'active_injury_restrictions_summary' or 'relevant_injury_restrictions', includes injury restriction summary.
         """
         with self._get_connection() as conn:
             user = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
@@ -327,10 +412,15 @@ class MemoryManager:
                 ).fetchall()
             ]
 
-            restrictions = [
-                dict(row)
+            dietary_restrictions = [
+                {
+                    "restriction_id": row["restriction_id"],
+                    "description": row["description"],
+                    "severity": row["severity"],
+                    "status": row["status"],
+                }
                 for row in conn.execute(
-                    "SELECT restriction_id, description, severity FROM restrictions WHERE user_id = ? AND is_active = 1 AND category = 'dietary'",
+                    "SELECT * FROM restrictions WHERE user_id = ? AND is_active = 1 AND category = 'dietary'",
                     (user_id,),
                 ).fetchall()
             ]
@@ -354,7 +444,7 @@ class MemoryManager:
                 ).fetchall()
             ]
 
-            # High-level training volume summary only (NO raw climb/hangboard logs)
+            # Enriched training load summary (as required by Policy v0.2 Section 2)
             t_summary = conn.execute(
                 """
                 SELECT COUNT(*) as session_count, AVG(rpe) as avg_rpe, SUM(duration_min) as total_duration
@@ -363,7 +453,34 @@ class MemoryManager:
                 (user_id,),
             ).fetchone()
 
-            return {
+            recent_sessions = [
+                {
+                    "date": row["session_date"],
+                    "session_type": row["session_type"],
+                    "type": row["session_type"],
+                    "duration_min": row["duration_min"],
+                    "rpe": row["rpe"],
+                }
+                for row in conn.execute(
+                    "SELECT session_date, session_type, duration_min, rpe FROM training_logs WHERE user_id = ? ORDER BY session_date DESC LIMIT 10",
+                    (user_id,),
+                ).fetchall()
+            ]
+
+            weight_body_composition = [
+                {
+                    "date": row["log_date"],
+                    "weight_kg": row["weight_kg"],
+                    "body_fat_pct": row["body_fat_pct"],
+                    "measurement_method": row["measurement_method"],
+                }
+                for row in conn.execute(
+                    "SELECT log_date, weight_kg, body_fat_pct, measurement_method FROM weight_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 30",
+                    (user_id,),
+                ).fetchall()
+            ]
+
+            result: Dict[str, Any] = {
                 "profile": {
                     "age": user["age"],
                     "gender": user["gender"],
@@ -371,21 +488,43 @@ class MemoryManager:
                     "weight_kg": user["weight_kg"],
                 },
                 "goals": goals,
-                "dietary_restrictions": restrictions,
+                "dietary_restrictions": dietary_restrictions,
                 "nutrition_logs": n_logs,
+                "weight_body_composition_trend": weight_body_composition,
                 "training_load_summary": {
                     "session_count": t_summary["session_count"] if t_summary else 0,
                     "avg_rpe": round(t_summary["avg_rpe"], 1) if (t_summary and t_summary["avg_rpe"]) else 0.0,
                     "total_duration_min": t_summary["total_duration"] if (t_summary and t_summary["total_duration"]) else 0,
+                    "recent_sessions_overview": recent_sessions,
                 },
             }
+
+            # Task-scoped access check (Section 3 of Agent Decision Policy v0.2)
+            scopes = granted_scopes or []
+            if "active_injury_restrictions_summary" in scopes or "relevant_injury_restrictions" in scopes:
+                injuries = [
+                    {
+                        "restriction_id": row["restriction_id"],
+                        "affected_area": row["affected_area"],
+                        "description": row["description"],
+                        "severity": row["severity"],
+                        "restricted_actions": json.loads(row["restricted_actions"]) if row["restricted_actions"] else [],
+                    }
+                    for row in conn.execute(
+                        "SELECT * FROM restrictions WHERE user_id = ? AND is_active = 1 AND category IN ('movement', 'training')",
+                        (user_id,),
+                    ).fetchall()
+                ]
+                result["task_scoped_injury_restrictions"] = injuries
+
+            return result
 
     def get_supervisor_context(self, user_id: str) -> Dict[str, Any]:
         """
         Retrieves high-level summary context for Supervisor:
         - Basic profile.
         - Active goals.
-        - All active restrictions (movement and dietary).
+        - All active restrictions (movement, training, dietary).
         - Status of active plans and proposals.
         - NO raw sets/reps and NO raw individual meal logs.
         """
@@ -403,15 +542,24 @@ class MemoryManager:
             ]
 
             restrictions = [
-                dict(row)
+                {
+                    "restriction_id": row["restriction_id"],
+                    "category": row["category"],
+                    "description": row["description"],
+                    "severity": row["severity"],
+                    "affected_area": row["affected_area"],
+                    "restricted_actions": json.loads(row["restricted_actions"]) if row["restricted_actions"] else [],
+                    "status": row["status"],
+                    "verification_status": row["verification_status"],
+                }
                 for row in conn.execute(
-                    "SELECT restriction_id, category, description, severity FROM restrictions WHERE user_id = ? AND is_active = 1",
+                    "SELECT * FROM restrictions WHERE user_id = ? AND is_active = 1",
                     (user_id,),
                 ).fetchall()
             ]
 
             last_training = conn.execute(
-                "SELECT session_date, session_type, rpe FROM training_logs WHERE user_id = ? ORDER BY session_date DESC LIMIT 1",
+                "SELECT session_date, session_type, duration_min, rpe FROM training_logs WHERE user_id = ? ORDER BY session_date DESC LIMIT 1",
                 (user_id,),
             ).fetchone()
 

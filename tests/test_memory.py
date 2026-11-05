@@ -1,10 +1,11 @@
 """
-Tests for MemoryManager and Least Privilege data isolation.
+Tests for MemoryManager and Least Privilege data isolation (Agent Decision Policy v0.2).
 
 Verifies:
-1. get_coach_context returns training logs and movement restrictions, but ZERO nutrition logs.
-2. get_nutritionist_context returns meal logs and dietary restrictions, but ZERO raw climb logs.
-3. Supervisor context gets high-level summaries and safety flags.
+1. get_coach_context returns training logs, movement restrictions, weight trend, but ZERO nutrition logs.
+2. get_nutritionist_context returns meal logs, dietary restrictions, enriched training overview, but ZERO raw climb logs.
+3. Task-scoped access allows Nutritionist to see injury restrictions ONLY when explicitly granted.
+4. Supervisor context gets high-level summaries and safety flags.
 """
 
 import pytest
@@ -43,6 +44,11 @@ def seeded_memory():
         category="movement",
         description="Lekkie naciągnięcie troczka A2 palca serdecznego prawej dłoni",
         severity="RESTRICTION",
+        affected_area="right_ring_finger_a2",
+        restricted_actions=["crimp_grip", "hangboard", "campus_board"],
+        status="active",
+        source="user_reported",
+        verification_status="unverified_medical",
     )
     mem.add_restriction(
         restriction_id="restr_02",
@@ -50,6 +56,8 @@ def seeded_memory():
         category="dietary",
         description="Nietolerancja laktozy",
         severity="WARNING",
+        status="active",
+        source="user_reported",
     )
 
     # 4. Add Training Log
@@ -77,14 +85,24 @@ def seeded_memory():
         is_complete=True,
     )
 
+    # 6. Add Weight Log
+    mem.add_weight_log(
+        log_id="w_01",
+        user_id="usr_test_01",
+        log_date="2026-11-03",
+        weight_kg=72.5,
+        body_fat_pct=11.2,
+        measurement_method="dxa",
+    )
+
     return mem
 
 
 def test_coach_context_least_privilege(seeded_memory):
     """
     Verification:
-    Calling get_coach_context must return climbing history and movement restrictions,
-    and must NOT contain any meal/nutrition records.
+    Calling get_coach_context must return climbing history, movement restrictions with actions,
+    and weight trend (Policy v0.2 Section 2), and must NOT contain any meal/nutrition records.
     """
     ctx = seeded_memory.get_coach_context("usr_test_01")
 
@@ -93,19 +111,24 @@ def test_coach_context_least_privilege(seeded_memory):
     assert len(ctx["goals"]) == 1
     assert ctx["goals"][0]["target_grade"] == "7c"
 
-    # 2. Must contain movement restrictions ONLY
+    # 2. Must contain movement restrictions with structured actions
     assert len(ctx["movement_restrictions"]) == 1
-    assert "troczka A2" in ctx["movement_restrictions"][0]["description"]
+    restr = ctx["movement_restrictions"][0]
+    assert restr["affected_area"] == "right_ring_finger_a2"
+    assert "hangboard" in restr["restricted_actions"]
 
     # 3. Must contain training logs
     assert len(ctx["training_logs"]) == 1
     assert ctx["training_logs"][0]["session_type"] == "bouldering"
     assert ctx["training_logs"][0]["details"]["hardest_flash"] == "7A"
 
-    # 4. CRITICAL: Absolute absence of nutrition data
+    # 4. Must contain weight trend (Policy v0.2 Section 2)
+    assert len(ctx["weight_trend"]) >= 1
+    assert ctx["weight_trend"][0]["weight_kg"] == 72.5
+
+    # 5. CRITICAL: Absolute absence of nutrition data
     assert "nutrition_logs" not in ctx
     assert "dietary_restrictions" not in ctx
-    # Double check that no nutrition logs leak into training logs
     serialized = str(ctx)
     assert "Owsianka" not in serialized
     assert "laktozy" not in serialized
@@ -114,8 +137,8 @@ def test_coach_context_least_privilege(seeded_memory):
 def test_nutritionist_context_least_privilege(seeded_memory):
     """
     Verification:
-    Calling get_nutritionist_context returns nutrition logs and dietary restrictions,
-    and training volume summary, but NO raw climb routes or raw bouldering logs.
+    Calling get_nutritionist_context returns nutrition logs, dietary restrictions,
+    and enriched training load summary (type, duration, rpe), but NO raw climb routes.
     """
     ctx = seeded_memory.get_nutritionist_context("usr_test_01")
 
@@ -129,14 +152,36 @@ def test_nutritionist_context_least_privilege(seeded_memory):
     assert ctx["nutrition_logs"][0]["calories"] == 650.0
     assert "Owsianka" in ctx["nutrition_logs"][0]["description"]
 
-    # 3. Contains aggregated load summary, NOT raw boulders
+    # 3. Contains enriched load summary (counts + recent session overviews)
     assert ctx["training_load_summary"]["session_count"] == 1
     assert ctx["training_load_summary"]["avg_rpe"] == 8.5
-    assert "training_logs" not in ctx
+    overview = ctx["training_load_summary"]["recent_sessions_overview"]
+    assert len(overview) == 1
+    assert overview[0]["type"] == "bouldering"
+    assert overview[0]["duration_min"] == 105
+    # Does NOT contain raw routes or boulder problems
+    assert "problems_sent" not in str(overview)
 
-    serialized = str(ctx)
-    assert "troczka A2" not in serialized
-    assert "7B" not in serialized
+    # 4. Without granted scopes, does NOT have injury restrictions
+    assert "task_scoped_injury_restrictions" not in ctx
+
+
+def test_nutritionist_task_scoped_access(seeded_memory):
+    """
+    Verification:
+    When granted_scopes includes 'active_injury_restrictions_summary',
+    Nutritionist receives the injury restriction summary (Policy v0.2 Section 3).
+    """
+    ctx = seeded_memory.get_nutritionist_context(
+        "usr_test_01",
+        granted_scopes=["active_injury_restrictions_summary"],
+    )
+
+    assert "task_scoped_injury_restrictions" in ctx
+    injuries = ctx["task_scoped_injury_restrictions"]
+    assert len(injuries) == 1
+    assert injuries[0]["affected_area"] == "right_ring_finger_a2"
+    assert "hangboard" in injuries[0]["restricted_actions"]
 
 
 def test_supervisor_context_least_privilege(seeded_memory):

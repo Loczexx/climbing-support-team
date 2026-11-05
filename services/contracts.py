@@ -6,6 +6,7 @@ Defines the common message envelope (AgentMessage) and specific payloads:
 - RECOMMENDATION
 - PROPOSAL
 - TASK_RESULT
+- RESTRICTION
 """
 
 from datetime import datetime, timezone
@@ -41,11 +42,28 @@ class SafetyLevel(str, Enum):
     CRITICAL_ESCALATION = "CRITICAL_ESCALATION"
 
 
+class RestrictionPayload(BaseModel):
+    """Structured restriction and safety flag schema as defined in Agent Decision Policy v0.2."""
+    restriction_id: str
+    category: Literal["training", "dietary", "medical", "movement"]
+    severity: SafetyLevel = SafetyLevel.RESTRICTION
+    affected_area: Optional[str] = None
+    restricted_actions: List[str] = Field(default_factory=list)
+    status: Literal["active", "resolved", "archived"] = "active"
+    source: Literal["user_reported", "agent_detected", "confirmed_specialist"] = "user_reported"
+    verification_status: Literal["unverified_medical", "verified_medical", "self_reported"] = "unverified_medical"
+    description: str
+
+
 class TaskPayload(BaseModel):
     """Payload for TASK messages dispatched by Supervisor."""
     intent: str
     user_query: str
     relevant_context: Dict[str, Any] = Field(default_factory=dict)
+    granted_scopes: List[str] = Field(
+        default_factory=list,
+        description="Task-scoped access tokens temporarily elevating data access (e.g. relevant_injury_restrictions)"
+    )
 
 
 class RecommendationPayload(BaseModel):
@@ -90,6 +108,7 @@ ContentPayload = Union[
     RecommendationPayload,
     ProposalPayload,
     TaskResultPayload,
+    RestrictionPayload,
     Dict[str, Any],
 ]
 

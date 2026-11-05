@@ -1,129 +1,159 @@
-# Agent Decision Policy — System Rules & Thresholds v0.1
+# Agent Decision Policy — System Rules & Thresholds v0.2
 
-## 1. Cel dokumentu
+## 1. Purpose & Enforcement (Cel i egzekwowanie reguł)
 
-Dokument definiuje wspólne reguły decyzyjne, progi bezpieczeństwa, zasady autoryzacji zmian (`PROPOSAL`) oraz macierz uprawnień dostępu do danych dla wszystkich komponentów systemu: `Supervisora`, `Climbing Coacha` oraz `General Nutritionista`. 
+Dokument definiuje wspólne reguły decyzyjne, macierz uprawnień, zasady routingu adaptacyjnego, progi bezpieczeństwa oraz cykl życia propozycji (`PROPOSAL`) dla całego ekosystemu (`Supervisor`, `Climbing Coach`, `General Nutritionist` oraz przyszłych specjalistów).
 
-Reguły te są egzekwowane dwutorowo:
-1. **Programowo (przez `Orchestrator` i `Memory Manager`)** — walidacja schematów JSON, uprawnień dostępu i statusów.
-2. **Instrukcyjnie (przez prompty systemowe agentów)** — klasyfikacja intencji, ocena ryzyka i merytoryczna analiza odchyleń.
+Egzekwowanie reguł odbywa się na trzech warstwach:
+1. **Agent Instructions (Prompty systemowe):** interpretacja merytoryczna, ocena kontekstu i formułowanie zaleceń.
+2. **Orchestrator & Memory Manager (Komponenty programowe):** kontrola uprawnień odczytu/zapisu, filtrowanie zapytań SQL/RAG, kontrola timeoutów i zarządzanie przepływem zadań.
+3. **Policy Validator (Deterministyczna walidacja wyników):** zestaw funkcji programowych sprawdzających przed zwróceniem odpowiedzi, czy wygenerowany wynik lub `PROPOSAL` nie narusza aktywnych ograniczeń (`RESTRICTION`), schematów JSON oraz twardych blokad bezpieczeństwa.
 
 
-# 2. Macierz dostępu do danych (Least Privilege Matrix)
+## 2. Least Privilege Matrix (Domyślna macierz uprawnień)
 
-`Memory Manager` udostępnia dane agentom wyłącznie zgodnie z poniższą macierzą uprawnień:
+Uprawnienia są podzielone na odczyt (`READ`) oraz zapis/modyfikację (`WRITE`). Zapis trwałych zmian w planach zawsze wymaga autoryzacji użytkownika (`PROPOSAL`).
 
 | Kategoria danych | Supervisor | Climbing Coach | General Nutritionist |
 | :--- | :--- | :--- | :--- |
-| Profil podstawowy (wiek, płeć, wzrost, masa) | Pełny odczyt | Pełny odczyt | Pełny odczyt |
-| Główne cele i terminy | Pełny odczyt | Pełny odczyt | Pełny odczyt |
-| Aktywne ograniczenia i flagi bezpieczeństwa | Pełny odczyt | Tylko aparat ruchu i sprzęt | Tylko dieta i interakcje lek–żywność |
-| Szczegółowa historia treningów i wspinania | Tylko podsumowania | Pełny odczyt i zapis | Brak dostępu (tylko szacowany koszt/liczba sesji) |
-| Standaryzowane testy (`Assessments`) | Brak dostępu | Pełny odczyt i zapis | Brak dostępu |
-| Surowe dzienniki posiłków | Brak dostępu | Brak dostępu | Pełny odczyt i zapis |
-| Trend masy i składu ciała (BF%) | Tylko podsumowania | Tylko aktualna masa | Pełny odczyt (wraz z metodą pomiaru) |
-| Pełna historia medyczna / psychologiczna | Brak dostępu | Brak dostępu | Brak dostępu |
+| **Profil podstawowy** (wiek, wzrost, płeć) | `READ` (niezbędne pola) | `READ` | `READ` |
+| **Główne cele i terminy** | `READ` / `WRITE` (po `PROPOSAL`) | `READ` / `WRITE` (cele treningowe po `PROPOSAL`) | `READ` / `WRITE` (cele wagowe/żywieniowe po `PROPOSAL`) |
+| **Flagi bezpieczeństwa** (`WARNING`, `RESTRICTION`, `CRITICAL`) | `READ` / `WRITE` | `READ` (treningowe) / `WRITE` (zgłoszenie flagi) | `READ` (żywieniowe) / `WRITE` (zgłoszenie flagi) |
+| **Historia treningów i wspinania** | `READ` (tylko podsumowania) | `READ` / `WRITE` (pełny dostęp) | `READ` (tylko podsumowania obciążenia: liczba, typ, czas, ogólna intensywność, wyjazdy) |
+| **Standaryzowane testy (`Assessments`)** | `READ` (wybrane podsumowania) | `READ` / `WRITE` (pełny dostęp z protokołem) | Brak dostępu |
+| **Surowe dzienniki posiłków** | Brak dostępu | Brak dostępu | `READ` / `WRITE` (pełny dostęp) |
+| **Masa ciała** | `READ` (podsumowania trendu) | `READ` (aktualna masa i trend, jeśli istotne dla wyniku) | `READ` / `WRITE` (pełny dostęp) |
+| **Skład ciała (BF%)** | `READ` (podsumowania, jeśli potrzebne) | Brak domyślnego dostępu | `READ` / `WRITE` (pełne dane wraz z metodą pomiaru) |
+| **Ograniczenia treningowe i urazy** | `READ` (flagi operacyjne) | `READ` / `WRITE` (pełny odczyt ograniczeń aparatu ruchu) | Brak domyślnego dostępu (dostęp przez *Task-scoped access*) |
+| **Ograniczenia dietetyczne i interakcje lek–żywność** | `READ` (flagi operacyjne) | Brak domyślnego dostępu (dostęp przez *Task-scoped access*) | `READ` / `WRITE` (pełny odczyt wykluczeń i istotnych interakcji) |
+| **Pełna historia medyczna i psychologiczna** | Brak dostępu | Brak dostępu | Brak dostępu |
 
 
-# 3. Reguły routingu i dekompozycji zapytań
+## 3. Dynamic Access Control (Tymczasowe rozszerzanie dostępu — Task-Scoped Access)
 
-`Supervisor` wybiera tryb obsługi według następującego drzewa decyzyjnego:
+Domyślna macierz uprawnień może zostać tymczasowo rozszerzona wyłącznie na czas wykonywania konkretnego zadania (`task_id`), jeżeli wymaga tego cel zapytania (np. użytkownik prosi `General Nutritionista` o dietę wspierającą gojenie zerwanego troczka).
 
-1. **Direct System Response (Bez wywoływania specjalistów):**
-   - Zapytanie dotyczy wyłącznie statusu konta, aktywnych celów, listy oczekujących obiektów `PROPOSAL` lub możliwości systemu.
-2. **Single-Domain Dispatch (Jeden specjalista):**
-   - Zapytanie mieści się w 100% w domenie treningowej (`Climbing Coach`) lub żywieniowej (`General Nutritionist`) i nie narusza granic drugiego planu.
-3. **Multi-Domain Decomposition (Równoległe wywołanie obu specjalistów):**
-   - Zapytanie wprost łączy obie domeny (np. przygotowanie taktyczno-żywieniowe pod wyjazd w skały lub zawody).
-   - Użytkownik zgłasza ogólnoustrojowy problem wieloczynnikowy (np. przewlekły spadek energii i siły na treningach).
-4. **Ambiguity Resolution (Pytanie doprecyzowujące):**
-   - Zapytanie jest zbyt krótkie lub wieloznaczne, by przypisać je do domeny, a wywołanie obu agentów wygenerowałoby zbędny koszt. `Supervisor` zadaje maksymalnie 1–2 konkretne pytania pomocnicze przed uruchomieniem specjalistów.
+### Zasady działania:
+1. **Brak samodzielnej eskalacji:** Specjalista nie może sam pobrać danych spoza swojej domeny.
+2. **Autoryzacja przez Supervisora lub Orchestrator:** Rozszerzenie zakresu (`granted_scopes`) jest nadawane przez `Supervisora` przy tworzeniu zadania (`TASK`) lub zatwierdzane po zgłoszeniu zapotrzebowania (`required_data` w obiekcie `RECOMMENDATION`).
+3. **Minimalny wycinek:** Rozszerzenie udostępnia wyłącznie ustrukturyzowany wycinek danych (np. obiekt aktywnego ograniczenia urazowego), a nigdy pełną historię innej domeny.
+4. **Automatyczne wygasanie i audyt:** Uprawnienie wygasa natychmiast po zmianie statusu zadania na `COMPLETED` / `FAILED`, a operacja zostaje zapisana w logach.
 
-
-# 4. Definicja „Istotnej zmiany” i wymóg `PROPOSAL`
-
-Żaden agent nie może wprowadzić trwałej modyfikacji w planie użytkownika bez wygenerowania obiektu `PROPOSAL` i uzyskania statusu `ACCEPTED`.
-
-## 4.1. Działania niewymagające `PROPOSAL` (Tryb doradczy / Ad-hoc)
-- Odpowiedzi na pytania edukacyjne i taktyczne (np. czas odpoczynku między wstawkami, propozycja posiłku przed wspinaniem).
-- Zapisanie pojedynczego treningu, przejścia wspinaczkowego lub potwierdzonego posiłku.
-- Drobna, jednorazowa korekta wewnątrz pojedynczej sesji na prośbę użytkownika (np. zamiana ćwiczenia rozgrzewkowego z powodu zajętego sprzętu na siłowni).
-
-## 4.2. Działania bezwzględnie wymagające `PROPOSAL`
-- **W domenie `Climbing Coach`:**
-  - utworzenie nowego planu treningowego lub rozpoczęcie nowego mezocyklu,
-  - zmiana liczby jednostek treningowych w tygodniu,
-  - zmiana struktury mikrocyklu po wykryciu odstępstwa (rekalibracja planu),
-  - zmiana docelowej intensywności lub objętości w kluczowych bojach/zwisach,
-  - wprowadzenie nieplanowanego tygodnia regeneracyjnego (`deload` / `tapering`).
-- **W domenie `General Nutritionist`:**
-  - utworzenie lub zmiana docelowego bilansu kalorycznego,
-  - zmiana docelowego rozkładu makroskładników,
-  - zmiana głównego celu (np. przejście z redukcji na utrzymanie masy),
-  - modyfikacja stałego planu posiłków.
+```json
+{
+  "access_grant_id": "grant_20261104_01",
+  "requesting_agent": "general_nutritionist",
+  "task_id": "task_20261104_05",
+  "data_scope": ["active_injury_restrictions_summary"],
+  "purpose": "recovery_nutrition_adjustment",
+  "approved_by": "supervisor",
+  "expires_after_task": true
+}
+```
 
 
-# 5. Progi rekalibracji planu (Plan Recalibration Rules)
+## 4. Routing & Decomposition (Routing adaptacyjny i dekompozycja)
 
-Agenci przed zaproponowaniem zmian oceniają rzeczywiste wykonanie planu względem założeń:
+Supervisor oraz Orchestrator dobierają tryb wywołania agentów w zależności od stopnia złożoności i jednoznaczności problemu:
 
-## 5.1. Rekalibracja treningowa (`Climbing Coach`)
-Procedura rekalibracji jest uruchamiana, gdy:
-- użytkownik wykonał nieplanowaną, obciążającą sesję (np. wyjazd w skały lub ciężki bouldering w zaplanowany dzień odpoczynku),
-- użytkownik pominął kluczową jednostkę treningową w bieżącym mikrocyklu,
-- raportowane RPE/zmęczenie lub pogorszenie stanu skóry dłoni uniemożliwia bezpieczne wykonanie kolejnej zaplanowanej jednostki.
-**Zasada nadrzędna:** Rzeczywiste obciążenie zawsze ma priorytet nad teoretyczną rozpiską w kalendarzu.
-
-## 5.2. Rekalibracja żywieniowa i walidacja luk (`General Nutritionist`)
-1. **Weryfikacja kompletności (`Missing Data Gate`):** Przed oceną tygodniowego trendu kalorycznego system sprawdza kompletność dzienników. Dzień z anomalnie niską liczbą wpisów lub bez potwierdzenia użytkownika otrzymuje flagę `INCOMPLETE` i jest **wykluczany** ze średniej tygodniowej.
-2. **Stabilność trendu masy:** Decyzje o korekcie kalorii mogą być podejmowane wyłącznie na podstawie trendu lub średniej kroczącej (minimum 7–14 dni), nigdy na podstawie pojedynczego ważenia.
+| Sytuacja | Tryb routingu | Opis działania |
+| :--- | :--- | :--- |
+| **Zapytanie o status systemu, cele, oczekujące PROPOSALS** | `Direct System Response` | Supervisor odpowiada bezpośrednio z metadanych, bez uruchamiania modeli specjalistów. |
+| **Problem dotyczy głównie jednej domeny i nie zmienia planu innego specjalisty** | `Single-Domain Dispatch` | Zadanie trafia wyłącznie do jednego specjalisty (`Climbing Coach` lub `General Nutritionist`). |
+| **Problem jednoznacznie obejmuje wiele domen od samego początku** (np. plan treningowy i żywieniowy na wyjazd w skały) | `Parallel Multi-Domain` | Orchestrator uruchamia zadania dla obu specjalistów (w chmurze równolegle, lokalnie na pojedynczym GPU w kolejce semafora). |
+| **Problem wieloczynnikowy o nieznanej przyczynie** (np. „Od 2 tygodni nie mam siły”) lub wynik pierwszego agenta wymaga konsultacji | `Adaptive Sequential Routing` | Uruchamiany jest najpierw główny specjalista (np. `Climbing Coach`). Drugi specjalista (`General Nutritionist`) jest uruchamiany sekwencyjnie tylko wtedy, gdy pierwszy agent wygeneruje obiekt `RECOMMENDATION` lub wskaże na potrzebę weryfikacji drugiej domeny. |
+| **Brak kluczowych informacji do przypisania domeny lub oceny bezpieczeństwa** | `Ambiguity Resolution` | Supervisor zadaje użytkownikowi możliwie najmniejszą liczbę pytań doprecyzowujących przed uruchomieniem specjalistów. |
 
 
-# 6. Bramki bezpieczeństwa i progi eskalacji (Safety Gates)
+## 5. Material Changes & Deviations (Istotne zmiany i odstępstwa od planu)
 
-System klasyfikuje sygnały ryzyka na trzech poziomach:
+System rozróżnia bieżące porady od zmian strukturalnych:
 
-## Poziom 1: `WARNING` (Ostrzeżenie analityczne)
-- **Wyzwalacze:**
-  - pojedyncza noc słabego snu lub podwyższone subiektywne zmęczenie,
-  - zdarty naskórek dłoni utrudniający chwyt,
-  - krótkoterminowe wahanie masy ciała lub 1–2 dni niepełnego logowania posiłków.
-- **Reakcja systemu:**
-  - brak blokady systemowej; specjalista uwzględnia informację w bieżącej poradzie (np. sugestia dostosowania chwytów do stanu skóry lub przypomnienie o uzupełnieniu dziennika).
+### 5.1. Istotna zmiana planu (Material Change — wymaga PROPOSAL)
+- **Trening:** nowy program treningowy, zmiana liczby dni treningowych w tygodniu, zmiana priorytetu cyklu (np. z wytrzymałości na siłę palców), zmiana obciążeń/objętości w głównych ćwiczeniach, dodanie nieplanowanego deloadu, przebudowa reszty tygodnia po odstępstwie.
+- **Żywienie:** nowy cel kaloryczny, zmiana docelowego rozkładu makroskładników, zmiana głównego celu wagowego (redukcja / utrzymanie / masa), zmiana stałego szablonu posiłków.
 
-## Poziom 2: `RESTRICTION` (Lokalna blokada domeny/struktury)
-- **Wyzwalacze treningowe:**
-  - zgłoszenie lokalnego bólu lub przeciążenia (np. kłucie w troczku przy łuczku, ból łokcia przy podciąganiu),
-  - aktywne ograniczenie rehabilitacyjne przypisane do profilu.
-- **Wyzwalacze żywieniowe:**
-  - prośba użytkownika o agresywny, niebezpieczny deficyt kaloryczny,
-  - zbieżność sygnałów niskiej dostępności energii (spadek wydolności, pogorszenie regeneracji, nawracające przeciążenia — ryzyko RED-S).
-- **Reakcja systemu:**
-  - `Climbing Coach` ma zablokowaną możliwość planowania ćwiczeń obciążających bolesną strukturę (może planować trening antagonistyczny, core lub mobilność nieobciążającą urazu) i wysyła rekomendację konsultacji z fizjoterapeutą.
-  - `General Nutritionist` ma zablokowaną możliwość proponowania dalszego cięcia kalorii; w razie potrzeby generuje `PROPOSAL` zwiększenia podaży energii lub przejścia na utrzymanie masy.
-
-## Poziom 3: `CRITICAL ESCALATION` (Przerwanie przepływu)
-- **Wyzwalacze:**
-  - ostry uraz podczas aktywności (np. słyszalny trzask w palcu/barku, nagły obrzęk, utrata funkcji ruchowej lub czucia),
-  - objawy ogólnoustrojowe (omdlenia, zawroty głowy, skrajne wyczerpanie, deklaracje wskazujące na ostre zaburzenia odżywiania).
-- **Reakcja systemu:**
-  - `Supervisor` natychmiast wstrzymuje generowanie planów treningowych i redukcyjnych, anuluje (`CANCELLED`) oczekujące propozycje zwiększające obciążenie i zwraca bezpośredni komunikat zalecający pilną konsultację lekarską.
+### 5.2. Istotne odstępstwo od planu (Significant Deviation — wyzwala ocenę rekalibracji)
+- **Trening:** wykonanie nieplanowanej, ciężkiej sesji (np. dzień w skałach zamiast dnia odpoczynku), pominięcie kluczowej jednostki w mikrocyklu, nagły skok RPE lub pogorszenie stanu skóry uniemożliwiające realizację kolejnego treningu.
+- **Żywienie:** wielodniowe, potwierdzone odchylenie od docelowej podaży energii (po odfiltrowaniu dni niekompletnych) lub zmiana obciążenia treningowego zgłoszona przez `Climbing Coacha`.
 
 
-# 7. Protokół rozwiązywania konfliktów międzyagentowych
+## 6. PROPOSAL Authorization (Autoryzacja zmian przez użytkownika)
 
-Gdy rekomendacja jednego specjalisty koliduje z planem drugiego (np. `Climbing Coach` zgłasza rozpoczęcie ciężkiego bloku siły maksymalnej, podczas gdy w `General Nutritionist` aktywny jest głęboki deficyt kaloryczny):
-
-1. `Supervisor` wstrzymuje automatyczne zatwierdzenie zmian i oznacza sytuację jako `GOAL_CONFLICT`.
-2. `Supervisor` zleca obu agentom wygenerowanie krótkiej oceny ryzyka oraz wariantów kompromisowych:
-   - **Wariant A (Priorytet: Wynik i siła):** zmniejszenie deficytu / przejście na zerowy bilans kaloryczny na czas trwania ciężkiego bloku treningowego.
-   - **Wariant B (Priorytet: Redukcja masy):** obniżenie objętości i intensywności treningu wspinaczkowego do poziomu bezpiecznego dla regeneracji na deficycie.
-3. `Supervisor` prezentuje oba warianty użytkownikowi w formie czytelnego wyboru i dopiero po decyzji użytkownika aktualizuje plany do statusu `APPLIED`.
+1. Żadna istotna zmiana planu lub celu nie może wejść w życie (`APPLIED`) bez przejścia przez status `PENDING_REVIEW` oraz wyraźnej decyzji użytkownika (`ACCEPTED`).
+2. Obiekt `PROPOSAL` musi zawierać: stan obecny, proponowaną zmianę, uzasadnienie, cel, wykorzystane źródła wiedzy (`EvidenceRecord`), poziom pewności oraz potencjalne ryzyko.
+3. W przypadku skonsolidowanej prezentacji propozycji od kilku agentów użytkownik ma prawo zaakceptować wybrane propozycje i odrzucić pozostałe, o ile nie są ze sobą nierozerwalnie powiązane ze względów bezpieczeństwa.
+4. Policy Validator blokuje ponowne wdrożenie (`APPLIED`) propozycji, która została już raz zastosowana lub unieważniona (`CANCELLED`).
 
 
-# 8. Reguły rzetelności danych i estymacji (Epistemic Integrity)
+## 7. Conflict Resolution (Rozwiązywanie konfliktów między agentami)
 
-1. **Brak pozornej precyzji wycen:** `Climbing Coach` zapisuje przejścia w oryginalnym systemie wyceny podanym przez użytkownika (np. skala francuska, Font, V-scale) i nie dokonuje sztywnych, automatycznych przeliczeń między skalami.
-2. **Porównywalność pomiarów:** Wyniki testów (`Assessments`) oraz pomiary procentu tkanki tłuszczowej (BF%) mogą być zestawiane w trendzie tylko wtedy, gdy zostały wykonane według tego samego protokołu i tą samą metodą pomiarową.
-3. **Oznaczanie szacunków (`ESTIMATED`):** Wszystkie wartości odżywcze wyliczone z opisu w języku naturalnym (NLP) lub ze zdjęcia posiadają status `ESTIMATED` do momentu jawnego potwierdzenia przez użytkownika.
-4. **Weryfikacja rekomendacji:** Odbiorca komunikatu `RECOMMENDATION` zawsze weryfikuje go względem własnych reguł dziedzinowych i ograniczeń bezpieczeństwa użytkownika przed utworzeniem `PROPOSAL`.
+Gdy cele lub rekomendacje specjalistów są ze sobą sprzeczne (np. głęboki deficyt kaloryczny u `General Nutritionista` przy jednoczesnym rozpoczęciu intensywnego bloku siłowego u `Climbing Coacha`):
+1. Supervisor oznacza stan jako `GOAL_CONFLICT` i wstrzymuje automatyczne wdrożenie kolidujących zmian.
+2. Specjaliści określają konsekwencje i przygotowują bezpieczne warianty alternatywne (np. Wariant A: zmniejszenie deficytu na czas bloku siłowego; Wariant B: redukcja objętości i intensywności treningu na czas redukcji masy).
+3. Supervisor przedstawia użytkownikowi spójne podsumowanie obu wariantów i prosi o wybór priorytetu.
+
+
+## 8. Safety & Escalation (Poziomy bezpieczeństwa i ograniczeń)
+
+Każde ograniczenie zapisywane w systemie zawiera źródło oraz status weryfikacji (`confirmed` przez specjalistę, `user_reported` przez użytkownika, `agent_detected` przez model):
+
+```json
+{
+  "restriction_id": "rest_001",
+  "category": "training",
+  "severity": "RESTRICTION",
+  "affected_area": "right_ring_finger_a2",
+  "restricted_actions": ["crimp_grip", "hangboard", "campus_board"],
+  "status": "active",
+  "source": "user_reported",
+  "verification_status": "unverified_medical"
+}
+```
+
+### Poziomy reakcji systemu:
+
+- **WARNING (Ostrzeżenie):**
+  - *Sygnały:* pogorszenie snu, przejściowe zmęczenie, zdarta skóra dłoni, krótkotrwałe wahanie masy.
+  - *Działanie:* brak blokady systemowej; agent uwzględnia czynnik w bieżącym doborze ćwiczeń lub poradzie.
+- **RESTRICTION (Lokalna blokada operacyjna):**
+  - *Sygnały:* zgłoszony ból lokalny lub przeciążenie aparatu ruchu, aktywne ograniczenie rehabilitacyjne, sygnały zbyt niskiej dostępności energii (ryzyko RED-S) lub prośba o niebezpiecznie głęboki deficyt.
+  - *Działanie:* Policy Validator blokuje możliwość zalecania ćwiczeń z listy `restricted_actions` (dla Trenera) lub dalszego obniżania kalorii (dla Dietetyka). Pozostałe, bezpieczne elementy systemu (np. trening core/mobilności, normalizacja diety) pozostają aktywne. System zaleca konsultację ze specjalistą (np. fizjoterapeutą).
+- **CRITICAL ESCALATION (Krytyczna eskalacja i przerwanie przepływu):**
+  - *Sygnały:* ostry uraz (np. trzask w palcu/barku, utrata funkcji, obrzęk), omdlenia, zawroty głowy, skrajne wyczerpanie, ostre zaburzenia odżywiania.
+  - *Działanie:* natychmiastowe wstrzymanie generowania planów treningowych i redukcyjnych, anulowanie (`CANCELLED`) oczekujących propozycji zwiększających obciążenie oraz bezpośrednie zalecenie pilnej konsultacji lekarskiej.
+
+
+## 9. Missing Data Handling (Obsługa niekompletnych danych)
+
+- **Żywienie:** Brak wpisu o posiłku nie jest traktowany jako zerowe spożycie (głodówka). Dzień wyglądający na niepełny otrzymuje status `INCOMPLETE`, agent w razie potrzeby dopytuje użytkownika o brakujące posiłki, a Memory Manager wyklucza dni `INCOMPLETE` z wyliczania średnich tygodniowych i trendów zgodności z planem.
+- **Trening i pomiary:** W przypadku braku kluczowych parametrów sesji lub protokołu testu agent prosi o uzupełnienie danych lub wykonuje analizę częściową, wyraźnie oznaczając poziom niepewności.
+
+
+## 10. User Feedback & Recalibration (Odrzucanie propozycji i rekalibracja)
+
+1. **Rzeczywistość ważniejsza niż plan:** Podczas rekalibracji mikrocyklu rzeczywiście wykonany trening i realny stan regeneracji mają zawsze wyższy priorytet niż pierwotne założenia planu.
+2. **Szacunek dla decyzji użytkownika:** Odrzucenie propozycji (`REJECTED`) jest zapisywane w Memory Managerze (wraz z powodem, jeśli użytkownik go poda i wyrazi zgodę). Odrzucenie nie jest traktowane jako błąd użytkownika — agent nie może natarczywie ponawiać identycznej propozycji w kolejnej wiadomości, o ile nie pojawiły się nowe przesłanki bezpieczeństwa.
+
+
+## 11. Inter-Agent Communication (Komunikacja między agentami)
+
+1. Wszystkie komunikaty między komponentami (`TASK`, `RECOMMENDATION`, `PROPOSAL`, `MESSAGE`) muszą przechodzić walidację względem wspólnych schematów JSON.
+2. Agent otrzymujący `RECOMMENDATION` od innego specjalisty nie traktuje jej jako automatycznego polecenia — ma obowiązek zweryfikować ją względem własnej bazy wiedzy oraz ograniczeń swojej domeny.
+3. Pole `context_summary` służy wyłącznie jako zwięzły opis przyczyny rekomendacji i nie może być używane do przemycania surowych danych wrażliwych z pominięciem Memory Managera.
+
+
+## 12. Confidence & Evidence (Pewność, estymacja i jakość dowodów)
+
+1. **Hierarchia dowodów:** Rekomendacje merytoryczne powinny odwoływać się do rekordów wiedzy (`EvidenceRecord`) zgodnie z hierarchią: przeglądy systematyczne i metaanalizy → oficjalne wytyczne i konsensusy → badania RCT → badania obserwacyjne. Agenci nie mogą przedstawiać pojedynczego badania na małej próbie jako uniwersalnego prawa.
+2. **Oznaczanie szacunków (`ESTIMATED`):** Dane z logowania posiłków językiem naturalnym (NLP) oraz przyszłej analizy zdjęć mają status `ESTIMATED` do czasu zatwierdzenia przez użytkownika.
+3. **Zakaz pozornej precyzji:** Agenci nie dokonują sztywnych przeliczeń między nieporównywalnymi skalami wspinaczkowymi ani nie porównują ze sobą testów (`Assessments`) lub pomiarów tkanki tłuszczowej (BF%) wykonanych różnymi metodami i w różnych warunkach.
+
+
+## 13. Policy Enforcement (Walidacja decyzji przed wykonaniem)
+
+Przed zapisaniem jakiejkolwiek zmiany w bazie danych lub zwróceniem odpowiedzi użytkownikowi Policy Validator (w ramach Orchestratora) weryfikuje:
+1. **Zgodność ze schematem:** Czy odpowiedź agenta jest poprawnym obiektem JSON zgodnym z kontraktem?
+2. **Brak naruszenia restrykcji:** Czy proponowany trening lub plan żywieniowy nie narusza aktywnych flag `RESTRICTION` lub `CRITICAL ESCALATION` użytkownika?
+3. **Autoryzację zapisu:** Czy próba modyfikacji planu posiada powiązany obiekt `PROPOSAL` ze statusem `ACCEPTED`?
+4. **Uprawnienia do danych:** Czy zapytanie do Memory Managera mieści się w domyślnej macierzy uprawnień (Sekcja 2) lub posiada ważny token Task-scoped access (Sekcja 3)?

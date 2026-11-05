@@ -22,7 +22,7 @@ Supervisor nie jest również odpowiedzialny za techniczne wykonywanie zadań, z
 
 ## 2.1. Routing i dekompozycja zadań (Intent Recognition & Task Decomposition)
 
-Supervisor analizuje wiadomości użytkownika (intencję, domenę oraz poziom ryzyka) i realizuje jeden z czterech trybów obsługi:
+Supervisor analizuje wiadomości użytkownika (intencję, domenę oraz poziom ryzyka) i realizuje jeden z trybów obsługi:
 
 1. **Bezpośrednia obsługa systemowa (Direct System Response):**
    - Proste zapytania o stan systemu, aktywne cele, dostępnych agentów lub oczekujące propozycje (`PROPOSALS`) Supervisor obsługuje samodzielnie na podstawie dostępnego kontekstu, bez uruchamiania modeli specjalistów.
@@ -30,10 +30,12 @@ Supervisor analizuje wiadomości użytkownika (intencję, domenę oraz poziom ry
    - Zapytanie dotyczy wyłącznie treningu → `Climbing Coach`.
    - Zapytanie dotyczy wyłącznie żywienia → `General Nutritionist`.
    - Zapytanie dotyczy wyłącznie objawu bólowego/rehabilitacji → procedura `RESTRICTION` i skierowanie do opieki medycznej (w MVP).
-3. **Dekompozycja wielodomenowa (Multi-domain task decomposition):**
-   - Gdy zapytanie dotyczy kilku dziedzin naraz (np. przygotowanie treningowe i żywieniowe pod weekendowy wyjazd w skały), Supervisor dzieli je na niezależne zadania (`TASK 1` dla `Climbing Coach`, `TASK 2` dla `General Nutritionist`), a po ich wykonaniu agreguje wyniki w jedną spójną odpowiedź.
-4. **Obsługa niejednoznacznych zapytań (Ambiguity Resolution):**
-   - Gdy intencja nie jest jasna (np. *„Ostatnio nie mam siły na wspinaniu”*), Supervisor może zadać użytkownikowi krótkie pytanie doprecyzowujące lub uruchomić ograniczoną konsultację najbardziej prawdopodobnych specjalistów. Supervisor powinien unikać nieuzasadnionego uruchamiania wszystkich agentów naraz.
+3. **Dekompozycja wielodomenowa (Parallel Multi-Domain):**
+   - Gdy zapytanie dotyczy kilku dziedzin naraz od początku (np. przygotowanie treningowe i żywieniowe pod weekendowy wyjazd w skały), Orchestrator uruchamia zadania dla obu specjalistów (`TASK 1` dla `Climbing Coach`, `TASK 2` dla `General Nutritionist`), a po ich wykonaniu Supervisor agreguje wyniki w jedną spójną odpowiedź.
+4. **Routing adaptacyjny sekwencyjny (Adaptive Sequential Routing):**
+   - W przypadku problemów wieloczynnikowych o nieznanej przyczynie (np. *„Od 2 tygodni nie mam siły na treningach”*) Orchestrator uruchamia najpierw głównego specjalistę (`Climbing Coach`). Drugi specjalista (`General Nutritionist`) jest uruchamiany sekwencyjnie **tylko wtedy**, gdy pierwszy agent dołączy obiekt `RECOMMENDATION` wskazujący na potrzebę weryfikacji żywieniowej. Eliminuje to zbędne wywołania drugiego modelu na RTX 2060, gdy przyczyna leży wyłącznie w przeciążeniu treningowym.
+5. **Obsługa niejednoznacznych zapytań (Ambiguity Resolution):**
+   - Gdy intencja nie jest jasna lub brakuje kluczowych danych, Supervisor zadaje użytkownikowi krótkie pytanie doprecyzowujące przed uruchomieniem specjalistów.
 
 ## 2.2. Koordynacja międzyagentowa (Inter-Agent Coordination)
 
