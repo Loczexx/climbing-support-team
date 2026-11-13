@@ -1,5 +1,8 @@
 # Physiotherapist — specyfikacja v0.1
 
+> [!NOTE]
+> **Status w MVP (Faza 1):** W obecnym etapie fizjoterapia nie jest osobnym agentem konwersacyjnym LLM. Obsługa zgłoszeń bólu, urazów i ograniczeń aparatu ruchu jest realizowana deterministycznie przez procedurę bezpieczeństwa `RESTRICTION` / `CRITICAL ESCALATION` w `Supervisorze` oraz twardą weryfikację w `Policy Validatorze`. Pełny agent stanowi cel kolejnych faz rozwoju.
+
 ## Cel
 
 Wspiera bezpieczne dostosowanie aktywności przy zgłoszonych objawach lub

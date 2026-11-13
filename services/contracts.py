@@ -73,7 +73,7 @@ class RecommendationPayload(BaseModel):
     recommendation: str
     reason: Optional[str] = None
     evidence: List[str] = Field(default_factory=list)
-    confidence: Optional[str] = "medium"
+    confidence: Optional[Union[float, str]] = "medium"
     priority: str = "medium"
     requires_user_confirmation: bool = True
     required_data: List[str] = Field(default_factory=list)

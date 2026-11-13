@@ -147,7 +147,7 @@ Supervisor może:
 - przekazywać rekomendacje (`RECOMMENDATION`) między agentami,
 - wykrywać konflikty między rekomendacjami i celami,
 - inicjować procedury bezpieczeństwa (`WARNING`, `RESTRICTION`, `CRITICAL ESCALATION`),
-- agregować wyniki wielu agentów w jedną spójną odpowiedź dla użytkownika (w MVP pełcząc bezpośrednio funkcję syntezy),
+- agregować wyniki wielu agentów w jedną spójną odpowiedź dla użytkownika (w MVP pełniąc bezpośrednio funkcję syntezy),
 - zarządzać cyklem życia `PROPOSAL`,
 - zapisywać metadane systemowe i logi decyzyjne przez `Memory Manager`.
 
@@ -266,6 +266,8 @@ Wszystkie komunikaty wymieniane w systemie podlegają walidacji względem schema
     "topic": "energy_expenditure_increase",
     "context_summary": "Zwiększono częstotliwość jednostek o wysokiej intensywności z 3 do 4 w tygodniu.",
     "recommendation": "Dostosowanie podaży energii i węglowodanów w dniach okołotreningowych.",
+    "reason": "Większa objętość i intensywność wymaga wyższej dostępności glikogenu dla ochrony przed przetrenowaniem.",
+    "evidence": ["Burke 2011", "Thomas 2016"],
     "priority": "medium",
     "requires_user_confirmation": true
   }
